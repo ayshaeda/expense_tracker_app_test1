@@ -55,6 +55,7 @@ const App = () => {
     const storedCategories = JSON.parse(localStorage.getItem('categories') || 'null');
     const initialCategories = storedCategories || defaultCategories;
     setCategories(initialCategories);
+    setAnalyticsCategories(initialCategories); // FIX: Auto-select all categories by default
     if (!storedCategories) {
         localStorage.setItem('categories', JSON.stringify(defaultCategories));
     }
@@ -306,11 +307,14 @@ const App = () => {
   const CHART_MAX_HEIGHT_PX = 220;
 
   const getDropdownButtonText = () => {
+    if (analyticsCategories.length === categories.length && categories.length > 0) {
+      return 'All categories selected';
+    }
     if (analyticsCategories.length === 0) {
-        return 'Select categories (optional)';
+      return 'Select categories';
     }
     if (analyticsCategories.length <= 2) {
-        return analyticsCategories.join(', ');
+      return analyticsCategories.join(', ');
     }
     return `${analyticsCategories.length} categories selected`;
   };
