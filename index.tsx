@@ -273,8 +273,8 @@ const App = () => {
           </form>
           <div className={`success-message ${showSuccess ? 'visible' : ''}`}>{successMessage}</div>
           <nav className="main-nav">
-              <button onClick={() => setView('list')}>View Expenses</button>
               <button onClick={() => setView('analytics')}>Analytics</button>
+              <button onClick={() => setView('list')}>View Expenses</button>
               <button onClick={() => setView('categories')}>Manage Categories</button>
           </nav>
         </>
