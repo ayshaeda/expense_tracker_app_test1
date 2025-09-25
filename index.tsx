@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 
 interface Expense {
@@ -34,6 +34,17 @@ const App = () => {
   const [analyticsStartDate, setAnalyticsStartDate] = useState('');
   const [analyticsEndDate, setAnalyticsEndDate] = useState('');
   const [analyticsCategories, setAnalyticsCategories] = useState<string[]>([]);
+  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+
+  // State for Export filters
+  const [exportStartDate, setExportStartDate] = useState('');
+  const [exportEndDate, setExportEndDate] = useState('');
+
+  // State for pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 10;
 
   // Load data from localStorage on initial render
   useEffect(() => {
@@ -48,11 +59,16 @@ const App = () => {
         localStorage.setItem('categories', JSON.stringify(defaultCategories));
     }
     
-    // Set default dates for analytics
+    // Set default dates
     const today = new Date();
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    setAnalyticsStartDate(firstDayOfMonth.toISOString().split('T')[0]);
-    setAnalyticsEndDate(today.toISOString().split('T')[0]);
+    const todayStr = today.toISOString().split('T')[0];
+    const firstDayOfMonthStr = firstDayOfMonth.toISOString().split('T')[0];
+
+    setAnalyticsStartDate(firstDayOfMonthStr);
+    setAnalyticsEndDate(todayStr);
+    setExportStartDate(firstDayOfMonthStr);
+    setExportEndDate(todayStr);
 
   }, []);
 
@@ -64,12 +80,34 @@ const App = () => {
         setDate(formattedDate);
     }
   }, [view, editingExpenseId]);
+
+  // Handle clicks outside the category dropdown to close it
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsCategoryDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
   
-  const groupedExpenses = useMemo(() => {
-    const sorted = [...expenses].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    return sorted.reduce((acc, expense) => {
+  const sortedExpenses = useMemo(() => {
+    return [...expenses].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [expenses]);
+
+  const paginatedExpenses = useMemo(() => {
+    return sortedExpenses.slice(
+        (currentPage - 1) * ITEMS_PER_PAGE,
+        currentPage * ITEMS_PER_PAGE
+    );
+  }, [sortedExpenses, currentPage]);
+
+  const groupedPaginatedExpenses = useMemo(() => {
+    return paginatedExpenses.reduce((acc, expense) => {
         const expenseDate = new Date(expense.date);
-        // A simple check to ensure date is valid before processing
         if (isNaN(expenseDate.getTime())) return acc;
 
         const monthYear = expenseDate.toLocaleString('default', { month: 'long', year: 'numeric' });
@@ -79,7 +117,9 @@ const App = () => {
         acc[monthYear].push(expense);
         return acc;
     }, {} as Record<string, Expense[]>);
-  }, [expenses]);
+  }, [paginatedExpenses]);
+
+  const totalPages = Math.ceil(sortedExpenses.length / ITEMS_PER_PAGE);
 
 
   const resetForm = () => {
@@ -145,6 +185,7 @@ const App = () => {
       setDate(expenseToEdit.date);
       setEditingExpenseId(id);
       setView('add');
+      window.scrollTo(0, 0);
     }
   };
   
@@ -187,13 +228,60 @@ const App = () => {
             : [...prev, category]
     );
   };
+  
+  const handleExport = (format: 'json' | 'csv') => {
+    const filteredExpenses = expenses.filter(e => {
+        const expenseDate = new Date(e.date);
+        if (isNaN(expenseDate.getTime())) return false;
+        const startDate = new Date(exportStartDate);
+        const endDate = new Date(exportEndDate);
+        endDate.setHours(23, 59, 59, 999);
+        return expenseDate >= startDate && expenseDate <= endDate;
+    });
+
+    if (filteredExpenses.length === 0) {
+        alert('No expenses in the selected date range to export.');
+        return;
+    }
+    
+    let dataStr = '';
+    let fileName = '';
+    let fileType = '';
+
+    if (format === 'json') {
+        const dataToExport = {
+            expenses: filteredExpenses,
+            categories: categories
+        };
+        dataStr = JSON.stringify(dataToExport, null, 2);
+        fileName = `expenses-${Date.now()}.json`;
+        fileType = 'application/json';
+    } else { // csv
+        const headers = ['id', 'amount', 'category', 'details', 'date'];
+        const rows = filteredExpenses.map(e => 
+            [e.id, e.amount, e.category, `"${e.details.replace(/"/g, '""')}"`, e.date].join(',')
+        );
+        dataStr = [headers.join(','), ...rows].join('\n');
+        fileName = `expenses-${Date.now()}.csv`;
+        fileType = 'text/csv';
+    }
+    
+    const blob = new Blob([dataStr], { type: fileType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
   const filteredAnalyticsData = useMemo(() => {
     const expensesInRange = expenses.filter(e => {
         const expenseDate = new Date(e.date);
         if (isNaN(expenseDate.getTime())) return false;
         const startDate = new Date(analyticsStartDate);
-        // To include the end date, set the time to the end of the day
         const endDate = new Date(analyticsEndDate);
         endDate.setHours(23, 59, 59, 999);
         return expenseDate >= startDate && expenseDate <= endDate;
@@ -216,6 +304,16 @@ const App = () => {
   
   const maxTotal = useMemo(() => Math.max(...filteredAnalyticsData.map(d => d.total), 0), [filteredAnalyticsData]);
   const CHART_MAX_HEIGHT_PX = 220;
+
+  const getDropdownButtonText = () => {
+    if (analyticsCategories.length === 0) {
+        return 'Select categories (optional)';
+    }
+    if (analyticsCategories.length <= 2) {
+        return analyticsCategories.join(', ');
+    }
+    return `${analyticsCategories.length} categories selected`;
+  };
 
   const renderHeader = () => {
     let title = 'Add New Expense';
@@ -285,28 +383,41 @@ const App = () => {
           {expenses.length === 0 ? (
             <p className="no-expenses">No expenses logged yet.</p>
           ) : (
-            Object.entries(groupedExpenses).map(([month, monthExpenses]) => (
-                <div key={month} className="month-group">
-                    <h2 className="month-header">{month}</h2>
-                    <ul className="expense-list">
-                        {monthExpenses.map(expense => (
-                            <li key={expense.id} className="expense-item" onClick={() => handleEdit(expense.id)} tabIndex={0} role="button" aria-label={`Edit expense of ${expense.amount} for ${expense.category} on ${expense.date}`}>
-                            <div className="expense-item-info">
-                                <span className="expense-category">{expense.category}</span>
-                                <span className="expense-details">{expense.details}</span>
-                                <span className="expense-date">{expense.date}</span>
-                            </div>
-                            <div className="expense-item-right">
-                                <span className="expense-amount">${expense.amount.toFixed(2)}</span>
-                                <button className="delete-btn" onClick={(e) => { e.stopPropagation(); handleDelete(expense.id); }} aria-label={`Delete expense of ${expense.amount} for ${expense.category}`}>
-                                &times;
-                                </button>
-                            </div>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-            ))
+            <>
+                {Object.entries(groupedPaginatedExpenses).map(([month, monthExpenses]) => (
+                    <div key={month} className="month-group">
+                        <h2 className="month-header">{month}</h2>
+                        <ul className="expense-list">
+                            {monthExpenses.map(expense => (
+                                <li key={expense.id} className="expense-item" onClick={() => handleEdit(expense.id)} tabIndex={0} role="button" aria-label={`Edit expense of ${expense.amount} for ${expense.category} on ${expense.date}`}>
+                                <div className="expense-item-info">
+                                    <span className="expense-category">{expense.category}</span>
+                                    <span className="expense-details">{expense.details}</span>
+                                    <span className="expense-date">{expense.date}</span>
+                                </div>
+                                <div className="expense-item-right">
+                                    <span className="expense-amount">${expense.amount.toFixed(2)}</span>
+                                    <button className="delete-btn" onClick={(e) => { e.stopPropagation(); handleDelete(expense.id); }} aria-label={`Delete expense of ${expense.amount} for ${expense.category}`}>
+                                    &times;
+                                    </button>
+                                </div>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                ))}
+                {totalPages > 1 && (
+                    <div className="pagination-controls">
+                        <button className="pagination-btn" onClick={() => setCurrentPage(prev => prev - 1)} disabled={currentPage === 1}>
+                            &larr; Previous
+                        </button>
+                        <span className="page-info">Page {currentPage} of {totalPages}</span>
+                        <button className="pagination-btn" onClick={() => setCurrentPage(prev => prev + 1)} disabled={currentPage === totalPages}>
+                            Next &rarr;
+                        </button>
+                    </div>
+                )}
+            </>
           )}
         </div>
       )}
@@ -343,19 +454,26 @@ const App = () => {
                 </div>
                 <div className="form-group">
                   <label>Categories</label>
-                  <div className="category-checkbox-group">
-                    {categories.map(cat => (
-                      <div key={cat} className="checkbox-wrapper">
-                        <input 
-                          type="checkbox" 
-                          id={`cat-checkbox-${cat}`} 
-                          value={cat}
-                          checked={analyticsCategories.includes(cat)}
-                          onChange={() => handleAnalyticsCategoryChange(cat)}
-                        />
-                        <label htmlFor={`cat-checkbox-${cat}`}>{cat}</label>
-                      </div>
-                    ))}
+                  <div className="dropdown-container" ref={dropdownRef}>
+                    <button className="dropdown-trigger" onClick={() => setIsCategoryDropdownOpen(!isCategoryDropdownOpen)}>
+                        {getDropdownButtonText()}
+                    </button>
+                    {isCategoryDropdownOpen && (
+                        <div className="dropdown-panel">
+                            {categories.map(cat => (
+                            <div key={cat} className="checkbox-wrapper">
+                                <input 
+                                type="checkbox" 
+                                id={`cat-checkbox-${cat}`} 
+                                value={cat}
+                                checked={analyticsCategories.includes(cat)}
+                                onChange={() => handleAnalyticsCategoryChange(cat)}
+                                />
+                                <label htmlFor={`cat-checkbox-${cat}`}>{cat}</label>
+                            </div>
+                            ))}
+                        </div>
+                    )}
                   </div>
                 </div>
             </div>
@@ -375,11 +493,38 @@ const App = () => {
                   <p className="no-expenses">No data for selected filters.</p>
                 )}
             </div>
+            <div className="export-container">
+              <h3>Export Data</h3>
+              <div className="export-filters">
+                  <div className="form-group">
+                      <label htmlFor="export-start-date">Start Date</label>
+                      <input type="date" id="export-start-date" className="form-input" value={exportStartDate} onChange={e => setExportStartDate(e.target.value)} />
+                  </div>
+                  <div className="form-group">
+                      <label htmlFor="export-end-date">End Date</label>
+                      <input type="date" id="export-end-date" className="form-input" value={exportEndDate} onChange={e => setExportEndDate(e.target.value)} />
+                  </div>
+              </div>
+              <div className="export-actions">
+                  <button className="export-btn" onClick={() => handleExport('json')}>Export as JSON</button>
+                  <button className="export-btn" onClick={() => handleExport('csv')}>Export as CSV</button>
+              </div>
+            </div>
         </div>
       )}
     </div>
   );
 };
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/service-worker.js').then(registration => {
+      console.log('ServiceWorker registration successful with scope: ', registration.scope);
+    }, err => {
+      console.log('ServiceWorker registration failed: ', err);
+    });
+  });
+}
 
 const container = document.getElementById('root');
 const root = createRoot(container!);
